@@ -9,7 +9,10 @@ const transactionRoutes = require('./routes/transaction.routes');
 
 const app = express();
 
-app.use();
+app.use(cors({
+  origin: 'https://mini-wallet-system-frontend.vercel.app',
+  credentials: true
+}));
 app.use(express.json());
 
 // connect to MongoDB
