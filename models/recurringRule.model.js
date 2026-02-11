@@ -50,4 +50,6 @@ const recurringRuleSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+recurringRuleSchema.index({ userId: 1, isActive: 1, nextRunDate: 1 });
+
 module.exports = mongoose.model('RecurringRule', recurringRuleSchema);

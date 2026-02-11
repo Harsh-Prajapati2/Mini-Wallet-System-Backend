@@ -191,17 +191,11 @@ async function getBalance(req, res) {
   try {
     const userId = req.user.userId;
     await processRecurringRules(userId, session);
-    const result = await recalculateBalances(userId, session);
-
-    if (!result.ok) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({ message: result.message });
-    }
+    const wallet = await getOrCreateWallet(userId, session);
 
     await session.commitTransaction();
     session.endSession();
-    return res.json({ balance: result.balance });
+    return res.json({ balance: Number(wallet.balance || 0) });
   } catch (err) {
     await session.abortTransaction();
     session.endSession();
@@ -313,13 +307,6 @@ async function transactions(req, res) {
   try {
     const userId = req.user.userId;
     await processRecurringRules(userId, session);
-    const recalcResult = await recalculateBalances(userId, session);
-
-    if (!recalcResult.ok) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({ message: recalcResult.message });
-    }
 
     await session.commitTransaction();
     session.endSession();
@@ -354,6 +341,10 @@ async function transactions(req, res) {
       items: items.map(decorateTransaction),
     });
   } catch (err) {
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
+    session.endSession();
     console.error(err);
     return res.status(500).json({ message: 'Server error' });
   }
