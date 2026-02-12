@@ -2,9 +2,33 @@ const User = require('../models/user.model');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken')
 const crypto = require('crypto')
+const nodemailer = require('nodemailer')
 require('dotenv').config();
 
-const RESET_TOKEN_TTL_MS = 15 * 60 * 1000;
+const RESET_OTP_TTL_MS = 10 * 60 * 1000;
+
+async function sendResetOtpEmail(toEmail, otp, fullName = 'User') {
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+        throw new Error('Email configuration is missing. Set EMAIL_USER and EMAIL_PASS in backend/.env');
+    }
+
+    const transporter = nodemailer.createTransport({
+        service: process.env.EMAIL_SERVICE || 'gmail',
+        auth: {
+            user: process.env.EMAIL_USER,
+            pass: process.env.EMAIL_PASS
+        }
+    });
+
+    const mailOptions = {
+        from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
+        to: toEmail,
+        subject: 'Mini Wallet Password Reset OTP',
+        text: `Hello ${fullName}, your OTP is ${otp}. It expires in 10 minutes.`
+    };
+
+    await transporter.sendMail(mailOptions);
+}
 
 const register = async(req,res) => {
     /* try {
@@ -102,17 +126,25 @@ const forgotPassword = async (req, res) => {
             return res.status(404).json({ error: 'User not found.' });
         }
 
-        const resetToken = crypto.randomBytes(32).toString('hex');
-        const resetTokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+        const otp = crypto.randomInt(100000, 1000000).toString();
+        const otpHash = crypto.createHash('sha256').update(otp).digest('hex');
 
-        user.resetPasswordToken = resetTokenHash;
-        user.resetPasswordExpires = new Date(Date.now() + RESET_TOKEN_TTL_MS);
+        user.resetPasswordOtpHash = otpHash;
+        user.resetPasswordOtpExpires = new Date(Date.now() + RESET_OTP_TTL_MS);
         await user.save();
 
+        try {
+            await sendResetOtpEmail(user.email, otp, user.fullName);
+        }
+        catch (mailErr) {
+            user.resetPasswordOtpHash = null;
+            user.resetPasswordOtpExpires = null;
+            await user.save();
+            throw mailErr;
+        }
+
         return res.status(200).json({
-            message: 'Reset token generated successfully.',
-            // No mail service is configured yet, so return a token for the frontend flow.
-            resetToken
+            message: 'OTP sent to your email address.'
         });
     }
     catch (err) {
@@ -123,29 +155,41 @@ const forgotPassword = async (req, res) => {
 
 const resetPassword = async (req, res) => {
     try {
-        const { token, newPassword } = req.body;
-        if (!token || !newPassword) {
-            return res.status(400).json({ error: 'Token and newPassword are required.' });
+        const { email, otp, newPassword } = req.body;
+        if (!email || !otp || !newPassword) {
+            return res.status(400).json({ error: 'Email, OTP and newPassword are required.' });
         }
 
         if (String(newPassword).length < 6) {
             return res.status(400).json({ error: 'Password must be at least 6 characters.' });
         }
 
-        const resetTokenHash = crypto.createHash('sha256').update(token).digest('hex');
-        const user = await User.findOne({
-            resetPasswordToken: resetTokenHash,
-            resetPasswordExpires: { $gt: new Date() }
-        });
+        const user = await User.findOne({ email });
 
         if (!user) {
-            return res.status(400).json({ error: 'Invalid or expired reset token.' });
+            return res.status(404).json({ error: 'User not found.' });
+        }
+
+        if (!user.resetPasswordOtpHash || !user.resetPasswordOtpExpires) {
+            return res.status(400).json({ error: 'Please request OTP first.' });
+        }
+
+        if (user.resetPasswordOtpExpires <= new Date()) {
+            user.resetPasswordOtpHash = null;
+            user.resetPasswordOtpExpires = null;
+            await user.save();
+            return res.status(400).json({ error: 'OTP expired. Please request a new OTP.' });
+        }
+
+        const otpHash = crypto.createHash('sha256').update(String(otp)).digest('hex');
+        if (otpHash !== user.resetPasswordOtpHash) {
+            return res.status(400).json({ error: 'Invalid OTP. Please try again.' });
         }
 
         const hashedPassword = await bcrypt.hash(newPassword,10);
         user.password = hashedPassword;
-        user.resetPasswordToken = null;
-        user.resetPasswordExpires = null;
+        user.resetPasswordOtpHash = null;
+        user.resetPasswordOtpExpires = null;
 
         await user.save();
 
