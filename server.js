@@ -9,10 +9,28 @@ const transactionRoutes = require('./routes/transaction.routes');
 
 const app = express();
 
+// app.use(cors({
+//   origin: 'https://mini-wallet-system-frontend.vercel.app',
+//   credentials: true
+// }));
+
+
+const allowedOrigins = [
+  // "http://localhost:5173",
+  'https://mini-wallet-system-frontend.vercel.app'
+];
+
 app.use(cors({
-  origin: 'https://mini-wallet-system-frontend.vercel.app',
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("CORS not allowed"));
+    }
+  },
   credentials: true
 }));
+
 app.use(express.json());
 
 // connect to MongoDB
